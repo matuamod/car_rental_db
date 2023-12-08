@@ -5,7 +5,7 @@ services:
   server:
     container_name: server
     build: ./server
-    command: uvicorn server.main:app --host 0.0.0.0 --reload
+    command: uvicorn server.main:app --host ${MAIN_HOST} --reload
     volumes:
       - .:/server
     ports:
@@ -14,7 +14,7 @@ services:
       - PG_USER=${PG_USER}
       - PG_PASSWORD=${PG_PASSWORD}
       - PG_DB=${PG_DB}
-      - PG_HOST=${PG_HOST}
+      - PG_HOST=${MAIN_HOST}
       - PG_PORT=${PG_PORT}
     depends_on:
       - pgdb
