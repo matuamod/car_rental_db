@@ -26,3 +26,34 @@ class UserLogin(BaseModel):
     password: str
     
     
+class UserProfile(BaseModel):
+    given_name: str
+    surname: str
+    passport_no: str
+    identification_no: str
+    license_no: str
+    telephone_no: str
+    email: str
+    date_of_birth: date
+    password: str
+    is_owner: bool
+    avatar_url: str
+    status: str
+    role_name: str
+    role_permission: str
+    
+    
+class EditUser(BaseModel):
+    old_password: str
+    new_password: str
+    new_avatar_url: str
+    
+    
+class AddCar(BaseModel):
+    type_name: str
+    brand: str
+    model: str
+    fuel_type: str
+    registration_plate: str
+    price_per_day: float
+    description: str
