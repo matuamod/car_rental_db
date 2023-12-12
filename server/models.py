@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date
 
@@ -18,7 +18,7 @@ class UserRegister(BaseModel):
     email: str
     date_of_birth: date
     password: str
-    avatar_url: Optional[str] = "https://www.shareicon.net/data/512x512/2015/10/05/651222_man_512x512.png"
+    avatar_url: Optional[str] = "Basic avatar image url"
     
     
 class UserLogin(BaseModel):
@@ -57,3 +57,27 @@ class AddCar(BaseModel):
     registration_plate: str
     price_per_day: float
     description: str
+    images: List[str] = ["Basic car image url"]
+    
+    
+class Cars(BaseModel):
+    car_id: int
+    type_name: str
+    brand: str
+    model: str
+    fuel_type: str
+    price_per_day: float
+    main_image_url: str
+    
+    
+class CurrentCar(BaseModel):
+    type_name: str
+    brand: str
+    model: str
+    fuel_type: str
+    registration_plate: str
+    price_per_day: float
+    description: str
+    images: List[str]
+    given_name: str
+    telephone_no: str

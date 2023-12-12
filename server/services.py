@@ -45,7 +45,7 @@ class ServiceHandler(object):
             """
                 SELECT user_registration(
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                ) AS id;
+                );
             """, (
                 user_register.given_name, user_register.surname, 
                 user_register.passport_no, user_register.identification_no, 
@@ -96,7 +96,7 @@ class ServiceHandler(object):
         try:
             result = self.db_handler.raw_sql(
             """
-                SELECT user_profile(%s) AS profile;
+                SELECT user_profile(%s);
             """, (user_id,)
             )
         except psycopg2.Error as e:
@@ -153,13 +153,15 @@ class ServiceHandler(object):
             result = self.db_handler.raw_sql(
             """
                 SELECT add_car(
-                    %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    ARRAY[%s]::VARCHAR[]
                 ) AS id;
             """, (
                 user_id, car.type_name,
                 car.brand, car.model,
                 car.fuel_type, car.registration_plate,
-                car.price_per_day, car.description
+                car.price_per_day, car.description,
+                car.images
                 )
             )
         except psycopg2.Error as e:
@@ -168,3 +170,103 @@ class ServiceHandler(object):
         else:
             self.db_handler.connection.commit()
             return {"id": result.fetchone()[0]}, status.HTTP_200_OK
+        
+    
+    def delete_car(self, user_id: int, car_id: int):
+        try:
+            _ = self.db_handler.raw_sql(
+            """
+                CALL delete_car(%s, %s);
+            """, (user_id, car_id)
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot delete car: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            return "Successful deliting!", status.HTTP_200_OK
+        
+        
+    def get_available_cars(self):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT get_available_cars();
+            """
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot get available cars: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            
+            data = result.fetchall()
+            
+            parsed_data = []
+            for item in data:
+                item_data = item[0].strip('()').split(',')
+                parsed_data.append({
+                    'car_id': int(item_data[0]),
+                    'type_name': item_data[1],
+                    'brand': item_data[2],
+                    'model': item_data[3],
+                    'fuel_type': item_data[4],
+                    'price_per_day': float(item_data[5]),
+                    'main_image_url': item_data[6]
+                })
+
+            json_data = json.dumps(parsed_data, indent=2)
+            
+            return json_data, status.HTTP_200_OK
+        
+        
+    def get_available_car(self, car_id: int):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT get_available_car(%s);
+            """, (car_id,)
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot get available car: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            
+            data_string = result.fetchone()[0]
+            data_string = data_string[1:-1]
+
+            split_data = []
+            current = ''
+            quoted = False
+
+            for char in data_string:
+                if char == ',' and not quoted:
+                    split_data.append(current)
+                    current = ''
+                elif char == '"':
+                    quoted = not quoted
+                    current += char
+                else:
+                    current += char
+
+            split_data.append(current) 
+            split_data = [item.replace('"', '') for item in split_data]
+
+            car_data = {
+                "type_name": split_data[0],
+                "brand": split_data[1],
+                "model": split_data[2],
+                "fuel_type": split_data[3],
+                "registration_plate": split_data[4],
+                "price_per_day": float(split_data[5]),
+                "description": split_data[6],
+                "images": split_data[7][1:-1].split(','),  # Преобразуем в список из одного элемента
+                "given_name": split_data[8],
+                "telephone_no": split_data[9]
+            }
+
+            # Преобразуем в JSON
+            json_data = json.dumps(car_data, indent=2)
+            
+            return json_data, status.HTTP_200_OK

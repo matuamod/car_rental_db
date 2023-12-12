@@ -189,32 +189,26 @@ CREATE TABLE IF NOT EXISTS taxes (
 
 CREATE OR REPLACE FUNCTION validate_user_register() RETURNS TRIGGER AS $$
 BEGIN
-    -- Проверка на соответствие номера паспорта формату
     IF NOT NEW.passport_no ~ '^[A-Z0-9]{9}$' THEN
         RAISE EXCEPTION 'Passport number is invalid';
     END IF;
 
-    -- Проверка на соответствие идентификационного номера формату
     IF NOT NEW.identification_no ~ '^[0-9]{14}$' THEN
         RAISE EXCEPTION 'Identification number is invalid';
     END IF;
 
-    -- Проверка на соответствие номера лицензии формату
     IF NOT NEW.license_no ~ '^[A-Z0-9]{10}$' THEN
         RAISE EXCEPTION 'License number is invalid';
     END IF;
 
-    -- Проверка на соответствие номера телефона формату
     IF NOT NEW.telephone_no ~ '^\+?[0-9]{10,12}$' THEN
         RAISE EXCEPTION 'Telephone number is invalid';
     END IF;
 
-    -- Проверка на соответствие адреса электронной почты формату
     IF NOT NEW.email ~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$' THEN
         RAISE EXCEPTION 'Email address is invalid';
     END IF;
 
-    -- Проверка, что пользователю больше 18 лет (дата рождения)
     IF NEW.date_of_birth > CURRENT_DATE - INTERVAL '18 years' THEN
         RAISE EXCEPTION 'User must be at least 18 years old';
     END IF;
@@ -223,7 +217,6 @@ BEGIN
         RAISE EXCEPTION 'Password length exceeds 100 characters';
     END IF;
 
-    -- Если все проверки пройдены успешно, данные вставляются в таблицу users
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -260,7 +253,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 
--- Назначение триггера для запуска функции перед вставкой данных в таблицу users
 CREATE TRIGGER trigger_validate_user_register
 BEFORE INSERT ON users
 FOR EACH ROW EXECUTE FUNCTION validate_user_register();
@@ -270,30 +262,24 @@ CREATE OR REPLACE PROCEDURE user_login(IN email_to_check VARCHAR, IN password_to
 DECLARE
     user_status ACTIVITY_STATUS_TYPE;
 BEGIN
-    -- Проверка на соответствие адреса электронной почты формату
     IF email_to_check ~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$' THEN
         SELECT status INTO user_status FROM users WHERE email = email_to_check;
 
         IF FOUND THEN
             IF user_status = 'active' THEN
-                -- Пользователь уже активен
                 RAISE EXCEPTION 'User is already active';
             ELSE
                 IF EXISTS (SELECT 1 FROM users WHERE email = email_to_check AND password = password_to_check) THEN
-                    -- Меняем статус на 'active', если пользователь неактивен
                     UPDATE users SET status = 'active', role_id = 2 WHERE email = email_to_check;
                     RAISE NOTICE 'Login successful! User status changed from inactive to active';
                 ELSE
-                    -- Пользователь существует, но пароль неверен
                     RAISE EXCEPTION 'Incorrect password';
                 END IF;
             END IF;
         ELSE
-            -- Пользователя с указанным email не существует
             RAISE EXCEPTION 'User with email % does not exist', email_to_check;
         END IF;
     ELSE
-        -- Некорректный формат email
         RAISE EXCEPTION 'Invalid email format';
     END IF;
 END;
@@ -309,19 +295,15 @@ BEGIN
 
         IF FOUND THEN
             IF user_status = 'active' THEN
-                -- Меняем статус на 'inactive', если пользователь активен
                 UPDATE users SET status = 'inactive', role_id = 1 WHERE id = user_id;
                 RAISE NOTICE 'User status changed from active to inactive';
             ELSE
-                -- Пользователь неактивен, ничего не меняем
                 RAISE EXCEPTION 'User is already inactive';
             END IF;
         ELSE
-            -- Пользователя с указанным ID не существует
             RAISE EXCEPTION 'User with such id % does not exist', user_id;
         END IF;
     ELSE
-        -- Выбор пользователя не подтверждён (choice = False)
         RAISE EXCEPTION 'User choice not confirmed';
     END IF;
 END;
@@ -491,16 +473,30 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+CREATE OR REPLACE PROCEDURE add_car_images(car_id INT, images VARCHAR[])
+AS $$
+DECLARE
+    image_url VARCHAR;
+BEGIN
+    FOREACH image_url IN ARRAY images
+    LOOP
+        INSERT INTO car_images (car_id, url) VALUES (car_id, image_url);
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+
 CREATE OR REPLACE FUNCTION add_car(
     user_id INT, type_name CAR_TYPE, 
     brand CAR_BRAND, model VARCHAR, 
     fuel_type FUEL_TYPE, registration_plate VARCHAR, 
-    price_per_day NUMERIC, description VARCHAR
+    price_per_day NUMERIC, description VARCHAR, images VARCHAR[]
 ) RETURNS INT AS $$
 DECLARE
     car_type_id INT;
     brand_id INT;
     fuel_type_id INT;
+    car_id INT;
 BEGIN
     CALL validate_add_car(
         user_id, type_name, 
@@ -509,9 +505,9 @@ BEGIN
         price_per_day, description
     );
 
-    PERFORM create_car_type(type_name) AS car_type_id;
-    PERFORM create_brand(brand, model) AS brand_id;
-    PERFORM create_fuel_type(fuel_type) AS fuel_type_id;
+    SELECT create_car_type(type_name) INTO car_type_id;
+    SELECT create_brand(brand, model) INTO brand_id;
+    SELECT create_fuel_type(fuel_type) INTO fuel_type_id;
 
     INSERT INTO cars (
         owner_id, car_type_id, 
@@ -524,14 +520,17 @@ BEGIN
         brand_id, fuel_type_id, 
         registration_plate, 
         price_per_day, description
-        );
+        ) 
+    RETURNING id INTO car_id;
 
-    RETURN user_id;
+    CALL add_car_images(car_id, images);
+
+    RETURN car_id;
 END;
 $$ LANGUAGE plpgsql;
 
 
-CREATE OR REPLACE FUNCTION update_owner_status()
+CREATE OR REPLACE FUNCTION update_owner_status_true()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM users WHERE id = NEW.owner_id AND is_owner = TRUE) THEN
@@ -542,7 +541,157 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
 CREATE TRIGGER set_owner_status
 AFTER INSERT ON cars
 FOR EACH ROW
-EXECUTE FUNCTION update_owner_status();
+EXECUTE FUNCTION update_owner_status_true();
+
+
+CREATE OR REPLACE PROCEDURE delete_car_type(car_type_id_var INT) AS $$
+DECLARE
+    car_type_count INT;
+BEGIN
+    -- Подсчет количества автомобилей с заданным car_type_id
+    SELECT COUNT(*) INTO car_type_count FROM cars WHERE car_type_id = car_type_id_var;
+
+    IF car_type_count <= 1 THEN
+        DELETE FROM car_types WHERE id = car_type_id_var;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE PROCEDURE delete_brand(brand_id_var INT) AS $$
+DECLARE
+    car_brand_count INT;
+BEGIN
+    -- Подсчет количества автомобилей с заданным brand_id
+    SELECT COUNT(*) INTO car_brand_count FROM cars WHERE brand_id = brand_id_var;
+
+    IF car_brand_count <= 1 THEN
+        DELETE FROM brands WHERE id = brand_id_var;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE PROCEDURE delete_fuel_type(fuel_type_id_var INT) AS $$
+DECLARE
+    car_fuel_count INT;
+BEGIN
+    -- Подсчет количества автомобилей с заданным fuel_type_id
+    SELECT COUNT(*) INTO car_fuel_count FROM cars WHERE fuel_type_id = fuel_type_id_var;
+
+    IF car_fuel_count <= 1 THEN
+        DELETE FROM fuel_types WHERE id = fuel_type_id_var;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE PROCEDURE delete_car(user_id INT, car_id INT) AS $$
+DECLARE
+    car_type_id_var INT;
+    brand_id_var INT;
+    fuel_type_id_var INT;
+BEGIN
+    CALL check_user_status(user_id);
+
+    SELECT car_type_id, brand_id, fuel_type_id INTO car_type_id_var, brand_id_var, fuel_type_id_var 
+    FROM cars WHERE id = car_id;
+
+    CALL delete_car_type(car_type_id_var);
+    CALL delete_fuel_type(fuel_type_id_var);
+    CALL delete_brand(brand_id_var);
+
+    DELETE FROM cars WHERE id = car_id;
+    DELETE FROM car_images WHERE car_id = car_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION update_user_status_false() RETURNS TRIGGER AS $$
+DECLARE
+    car_count INT;
+BEGIN
+    SELECT COUNT(*) INTO car_count FROM cars WHERE owner_id = OLD.id;
+
+    IF car_count = 0 THEN
+        UPDATE users SET is_owner = false WHERE id = OLD.id;
+    END IF;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE TRIGGER user_car_deletion_trigger
+AFTER DELETE ON cars
+FOR EACH ROW
+EXECUTE FUNCTION update_user_status_false();
+
+
+CREATE OR REPLACE FUNCTION get_available_cars() 
+RETURNS TABLE (
+    car_id INT, type_name CAR_TYPE,
+    brand CAR_BRAND, model VARCHAR,
+    fuel_type FUEL_TYPE, price_per_day NUMERIC,
+    main_image_url VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        cars.id, car_types.type_name,
+        brands.name, brands.model,
+        fuel_types.type_name, cars.price_per_day,
+        (SELECT url FROM car_images WHERE car_images.car_id = cars.id LIMIT 1) AS main_image_url
+    FROM 
+        cars
+    JOIN 
+        car_types ON cars.car_type_id = car_types.id
+    JOIN 
+        brands ON cars.brand_id = brands.id
+    JOIN 
+        fuel_types ON cars.fuel_type_id = fuel_types.id
+    WHERE 
+        cars.is_available = TRUE
+    GROUP BY 
+        cars.id, car_types.type_name, brands.name, brands.model, fuel_types.type_name, cars.price_per_day;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_available_car(car_id INT) 
+RETURNS TABLE (
+    type_name CAR_TYPE, brand CAR_BRAND,
+    model VARCHAR, fuel_type FUEL_TYPE,
+    registration_plate VARCHAR, price_per_day NUMERIC,
+    description VARCHAR, images VARCHAR[],
+    given_name VARCHAR, telephone_no VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        car_types.type_name, brands.name,
+        brands.model, fuel_types.type_name,
+        cars.registration_plate, cars.price_per_day,
+        cars.description,
+        ARRAY(SELECT url FROM car_images WHERE car_images.car_id = cars.id),
+        users.given_name, users.telephone_no
+    FROM 
+        cars
+    JOIN 
+        car_types ON cars.car_type_id = car_types.id
+    JOIN 
+        brands ON cars.brand_id = brands.id
+    JOIN 
+        fuel_types ON cars.fuel_type_id = fuel_types.id
+    JOIN 
+        users ON cars.owner_id = users.id
+    WHERE 
+        cars.id = car_id
+        AND cars.is_available = TRUE;
+END;
+$$ LANGUAGE plpgsql;
+
