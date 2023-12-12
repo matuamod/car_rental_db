@@ -182,7 +182,6 @@ CREATE TABLE IF NOT EXISTS rental_deals (
 CREATE TABLE IF NOT EXISTS taxes (
     id SERIAL PRIMARY KEY NOT NULL UNIQUE,
     rental_deal_id INT REFERENCES rental_deals(id) ON DELETE CASCADE NOT NULL,
-    tax_percent NUMERIC NOT NULL,
     price NUMERIC NOT NULL
 );
 
@@ -662,6 +661,20 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+CREATE OR REPLACE PROCEDURE check_car(car_id INT)
+AS $$
+DECLARE
+    car_exists BOOLEAN;
+BEGIN
+    SELECT EXISTS(SELECT 1 FROM cars WHERE id = car_id) INTO car_exists;
+
+    IF NOT car_exists THEN
+        RAISE EXCEPTION 'Car with id % not found', car_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
 CREATE OR REPLACE FUNCTION get_available_car(car_id INT) 
 RETURNS TABLE (
     type_name CAR_TYPE, brand CAR_BRAND,
@@ -671,6 +684,8 @@ RETURNS TABLE (
     given_name VARCHAR, telephone_no VARCHAR
 ) AS $$
 BEGIN
+    CALL check_car(car_id);
+
     RETURN QUERY
     SELECT 
         car_types.type_name, brands.name,
@@ -695,3 +710,184 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
+CREATE OR REPLACE PROCEDURE update_car(
+    user_id INT, car_id INT,
+    new_price_per_day NUMERIC,
+    new_description VARCHAR
+) AS $$
+BEGIN
+    CALL check_user_status(user_id);
+    CALL check_car(car_id);
+
+    IF new_price_per_day <> 0 THEN
+        UPDATE cars
+        SET 
+            price_per_day = new_price_per_day
+        WHERE 
+            id = car_id 
+            AND owner_id = user_id;
+    END IF;
+
+    IF new_description <> 'string' THEN
+        UPDATE cars
+        SET 
+            description = new_description
+        WHERE 
+            id = car_id 
+            AND owner_id = user_id;
+    END IF;
+
+    IF new_price_per_day = 0 AND new_description = 'string' THEN
+        RAISE EXCEPTION 'Both new price per day and new description cannot be clear, nothing to edit';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION make_review(user_id INT, car_id INT, message VARCHAR)
+RETURNS INT AS $$
+BEGIN
+    CALL check_user_status(user_id);
+    CALL check_car(car_id);
+
+    IF message = '' OR message IS NULL THEN
+        RAISE EXCEPTION 'Message cannot be empty';
+    ELSE
+        INSERT INTO reviews (car_id, message) VALUES (car_id, message) RETURNING id INTO car_id;
+        RETURN car_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_reviews(chosen_car_id INT)
+RETURNS TABLE (
+    given_name VARCHAR,
+    description VARCHAR
+) AS $$
+BEGIN
+    CALL check_car(chosen_car_id);
+
+    RETURN QUERY
+    SELECT users.given_name, reviews.message
+    FROM reviews
+    JOIN cars ON reviews.car_id = cars.id
+    JOIN users ON cars.owner_id = users.id
+    WHERE cars.id = chosen_car_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION add_to_favourites(user_id INT, car_id INT) 
+RETURNS INT AS $$
+DECLARE
+    added_id INT;
+BEGIN
+    CALL check_user_status(user_id);
+    CALL check_car(car_id);
+
+    INSERT INTO favorite_cars (user_id, car_id)
+    VALUES (user_id, car_id)
+    RETURNING id INTO added_id;
+
+    RETURN added_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION get_favourites(chosen_user_id INT) 
+RETURNS TABLE (
+    car_id INT, type_name CAR_TYPE,
+    brand CAR_BRAND, model VARCHAR,
+    fuel_type FUEL_TYPE, price_per_day NUMERIC,
+    main_image_url VARCHAR
+) AS $$
+BEGIN
+    CALL check_user_status(chosen_user_id);
+
+    RETURN QUERY
+    SELECT 
+        cars.id, car_types.type_name,
+        brands.name, brands.model,
+        fuel_types.type_name, cars.price_per_day,
+        (SELECT url FROM car_images WHERE car_images.car_id = cars.id LIMIT 1) AS main_image_url
+    FROM 
+        cars
+    JOIN 
+        car_types ON cars.car_type_id = car_types.id
+    JOIN 
+        brands ON cars.brand_id = brands.id
+    JOIN 
+        fuel_types ON cars.fuel_type_id = fuel_types.id
+    WHERE 
+        cars.id IN (SELECT favorite_cars.car_id FROM favorite_cars WHERE favorite_cars.user_id = chosen_user_id)
+        AND cars.is_available = TRUE
+    GROUP BY 
+        cars.id, car_types.type_name, brands.name, brands.model, fuel_types.type_name, cars.price_per_day;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION make_rent(
+    user_id INT, car_id INT,
+    start_location VARCHAR,
+    end_location VARCHAR,
+    start_date DATE, end_date DATE
+) RETURNS INT AS $$
+DECLARE
+    pick_up_location_id INT;
+    car_price NUMERIC;
+    total_price NUMERIC;
+    tax_price NUMERIC;
+    rent_price NUMERIC;
+    rental_deal_id INT;
+    owner_id INT;
+BEGIN
+    INSERT INTO pick_up_location (start_location, end_location)
+    VALUES (start_location, end_location)
+    RETURNING id INTO pick_up_location_id;
+
+    SELECT cars.owner_id INTO owner_id
+    FROM cars
+    WHERE cars.id = car_id;
+
+    IF owner_id = user_id THEN
+        RAISE EXCEPTION 'User cannot rent their own car';
+    END IF;
+
+    IF start_date < NOW() OR end_date < NOW() THEN
+        RAISE EXCEPTION 'Dates cannot be in the past';
+    END IF;
+
+    IF start_location >= end_location THEN
+        RAISE EXCEPTION 'Start location should be before end location';
+    END IF;
+
+    SELECT price_per_day INTO car_price
+    FROM cars
+    WHERE id = car_id;
+
+    rent_price := (end_date - start_date) * car_price;
+    tax_price := rent_price * 0.13;
+    total_price := rent_price + tax_price;
+
+    INSERT INTO rental_deals (
+        user_id, car_id,
+        pick_up_id, start_date,
+        end_date, total_price
+    ) VALUES (
+        user_id, car_id,
+        pick_up_location_id, start_date,
+        end_date, rent_price
+    ) RETURNING id INTO rental_deal_id;
+
+    INSERT INTO payments (user_id, payed_price, time)
+    VALUES (user_id, total_price, NOW());
+
+    INSERT INTO taxes (rental_deal_id, price)
+    VALUES (rental_deal_id, tax_price);
+
+    RETURN rental_deal_id;
+END;
+$$ LANGUAGE plpgsql;

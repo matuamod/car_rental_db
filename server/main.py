@@ -2,7 +2,7 @@ import json
 from fastapi import FastAPI, status, HTTPException
 from typing import List
 from server.services import ServiceHandler
-from server.models import UserRegister, UserLogin, UserProfile, EditUser, AddCar, Cars, CurrentCar
+from server.models import UserRegister, UserLogin, UserProfile, EditUser, AddCar, Cars, CurrentCar, UpdateCar, RentalDeal
 
 app = FastAPI(
     title="Car Rental App"
@@ -87,8 +87,12 @@ def delete_car(user_id: int, car_id: int):
 
 
 @app.put("/user/{user_id}/update_car/{car_id}")
-def update_car(user_id: int, car_id: int):
-    pass
+def update_car(user_id: int, car_id: int, update_car: UpdateCar):
+    data, stat_code = serv_handler.update_car(user_id, car_id, update_car)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=data)
+    return data
 
 
 @app.get("/cars", response_model=List[Cars])
@@ -115,21 +119,51 @@ def get_car(car_id: int):
     return available_car_data
 
 
-@app.post("/cars/{car_id}/make_review")
-def make_review(car_id: int):
-    pass
+@app.post("/user/{user_id}/cars/{car_id}/make_review")
+def make_review(user_id: int, car_id: int, message: str = None):
+    data, stat_code = serv_handler.make_review(user_id, car_id, message)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=data)
+    return data
 
 
-@app.post("/cars/{car_id}/add_to_favourites")
-def add_to_favourites(car_id: int):
-    pass
+@app.get("/cars/{car_id}/get_reviews")
+def get_reviews(car_id: int):
+    json_data, stat_code = serv_handler.get_reviews(car_id)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=json_data)
+    
+    data_dict = json.loads(json_data)
+    return data_dict
 
 
-@app.post("/cars/{car_id}/make_rent")
-def make_rent(car_id: int):
-    pass
+@app.post("/user/{user_id}/cars/{car_id}/add_to_favourites")
+def add_to_favourites(user_id: int, car_id: int):
+    data, stat_code = serv_handler.add_to_favourites(user_id, car_id)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=data)
+    return data
 
 
-@app.post("/user/{user_id}/profile/payment_history")
-def get_payment_history(user_id: int):
-    pass
+@app.get("/user/{user_id}/get_favourites", response_model=List[Cars])
+def get_favourites(user_id: int):
+    json_data, stat_code = serv_handler.get_favourites(user_id)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=json_data)
+    
+    data_dict = json.loads(json_data)
+    favourite_cars_data = [Cars(**car_data) for car_data in data_dict]
+    return favourite_cars_data
+
+
+@app.post("/user/{user_id}/cars/{car_id}/make_rent")
+def make_rent(user_id: int, car_id: int, rental_deal: RentalDeal):
+    data, stat_code = serv_handler.make_rent(user_id, car_id, rental_deal)
+    
+    if stat_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=stat_code, detail=data)
+    return data

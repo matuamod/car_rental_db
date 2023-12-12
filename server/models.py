@@ -81,3 +81,15 @@ class CurrentCar(BaseModel):
     images: List[str]
     given_name: str
     telephone_no: str
+    
+    
+class UpdateCar(BaseModel):
+    new_price_per_day: float
+    new_description: str
+    
+    
+class RentalDeal(BaseModel):
+    start_location: str
+    end_location: str
+    start_date: date
+    end_date: date

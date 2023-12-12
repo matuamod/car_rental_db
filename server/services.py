@@ -3,7 +3,7 @@ import json
 import psycopg2
 from fastapi import status
 from server.db import DatabaseHandler
-from server.models import Role, UserRegister, UserLogin, EditUser, AddCar
+from server.models import Role, UserRegister, UserLogin, EditUser, AddCar, UpdateCar, RentalDeal
 
 
 class ServiceHandler(object):
@@ -187,6 +187,24 @@ class ServiceHandler(object):
             return "Successful deliting!", status.HTTP_200_OK
         
         
+    def update_car(self, user_id: int, car_id: int, update_car: UpdateCar):
+        try:
+            _ = self.db_handler.raw_sql(
+            """
+                CALL update_car(%s, %s, %s, %s);
+            """, (
+                user_id, car_id, 
+                update_car.new_price_per_day, update_car.new_description
+                )
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot update car: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            return "Successful updating!", status.HTTP_200_OK
+        
+        
     def get_available_cars(self):
         try:
             result = self.db_handler.raw_sql(
@@ -270,3 +288,118 @@ class ServiceHandler(object):
             json_data = json.dumps(car_data, indent=2)
             
             return json_data, status.HTTP_200_OK
+        
+        
+    def make_review(self, user_id: int, car_id: int, message: str):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT make_review(
+                    %s, %s, %s
+                ) AS id;
+            """, (
+                user_id, car_id, message
+                )
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot make review: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            return {"id": result.fetchone()[0]}, status.HTTP_200_OK
+        
+        
+    def get_reviews(self, car_id: int):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT get_reviews(%s);
+            """, (car_id,)
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot get reviews: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            
+            data = result.fetchall()
+            
+            parsed_data = []
+            for item in data:
+                item_data = item[0].strip('()').split(',')
+                parsed_data.append({
+                    'given_name': item_data[0],
+                    'message': item_data[1]
+                })
+
+            json_data = json.dumps(parsed_data, indent=2)
+            
+            return json_data, status.HTTP_200_OK
+        
+    
+    def add_to_favourites(self, user_id: int, car_id: int):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT add_to_favourites(
+                    %s, %s
+                ) AS id;
+            """, (user_id, car_id)
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot add to favourites: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            return {"id": result.fetchone()[0]}, status.HTTP_200_OK
+        
+        
+    def get_favourites(self, user_id: int):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT get_favourites(%s);
+            """, (user_id,)
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot get favourite cars: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            
+            data = result.fetchall()
+            
+            parsed_data = []
+            for item in data:
+                item_data = item[0].strip('()').split(',')
+                parsed_data.append({
+                    'car_id': int(item_data[0]),
+                    'type_name': item_data[1],
+                    'brand': item_data[2],
+                    'model': item_data[3],
+                    'fuel_type': item_data[4],
+                    'price_per_day': float(item_data[5]),
+                    'main_image_url': item_data[6]
+                })
+
+            json_data = json.dumps(parsed_data, indent=2)
+            
+            return json_data, status.HTTP_200_OK
+        
+        
+    def make_rent(self, user_id, car_id, rental_deal: RentalDeal):
+        try:
+            result = self.db_handler.raw_sql(
+            """
+                SELECT make_rent(%s, %s, %s, %s, %s, %s);
+            """, (
+                user_id, car_id, rental_deal.start_location, rental_deal.end_location,
+                rental_deal.start_date, rental_deal.end_date
+                )
+            )
+        except psycopg2.Error as e:
+            self.db_handler.connection.rollback()
+            return f"Cannot add to favourites: {e}".split('\n')[0], status.HTTP_400_BAD_REQUEST
+        else:
+            self.db_handler.connection.commit()
+            return {"id": result.fetchone()[0]}, status.HTTP_200_OK
